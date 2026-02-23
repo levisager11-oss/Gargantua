@@ -642,7 +642,7 @@
                     // Scale uv.y by an integer (2.0) so the 3.0 wrapping jump becomes 6.0 (still an integer)
                     float noise2 = texture2D(noiseTex, vec2(uv.x * 2.5, uv.y * 2.0) + vec2(iTime*0.1)).g;
                     
-                    float intensity = noise * noise2 * 1.8;
+                    float intensity = noise * noise2 * 2.5;
                     float alpha = smoothstep(DISK_INNER, DISK_INNER + 0.5, r) * (1.0 - smoothstep(DISK_OUTER - 1.0, DISK_OUTER, r));
                     
                     vec3 hot = vec3(1.0, 0.95, 0.8);
@@ -677,10 +677,9 @@
                     for(int i = 0; i < MAX_STEPS; i++) {
                         float r = length(p);
                         
-                        // 1. Event Horizon Hit — ray is swallowed, everything goes black
+                        // 1. Event Horizon Hit
                         if(r < BH_RADIUS) {
                             col = vec3(0.0);
-                            accColor = vec3(0.0);
                             break;
                         }
                         
@@ -724,7 +723,7 @@
                         // Photon ring glow: bright thin ring near the photon sphere
                         float photonDist = abs(r - PHOTON_SPHERE);
                         if(photonDist < 0.3) {
-                            float ringGlow = exp(-photonDist * 20.0) * 0.08;
+                            float ringGlow = exp(-photonDist * 15.0) * 0.15;
                             accColor += vec3(1.0, 0.85, 0.6) * ringGlow;
                         }
                         
@@ -758,9 +757,9 @@
         composer.addPass(renderPass);
 
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        bloomPass.threshold = 0.3;
-        bloomPass.strength = 0.8;
-        bloomPass.radius = 0.8;
+        bloomPass.threshold = 0.08;
+        bloomPass.strength = 1.2;
+        bloomPass.radius = 1.1;
         composer.addPass(bloomPass);
 
         // --- Input Handling ---
