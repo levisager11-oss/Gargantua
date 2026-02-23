@@ -685,7 +685,22 @@
             frogTriggered = false;
         };
 
-        window.addEventListener('keydown', (e) => keysPressed.add(e.code));
+        const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+        let konamiIndex = 0;
+
+        window.addEventListener('keydown', (e) => {
+            keysPressed.add(e.code);
+            // Konami code check
+            if (e.code === konamiCode[konamiIndex]) {
+                konamiIndex++;
+                if (konamiIndex === konamiCode.length) {
+                    window.open('https://youtu.be/xvFZjo5PgG0', '_blank');
+                    konamiIndex = 0;
+                }
+            } else {
+                konamiIndex = 0;
+            }
+        });
         window.addEventListener('keyup', (e) => keysPressed.delete(e.code));
 
         window.addEventListener('mousedown', (e) => {
