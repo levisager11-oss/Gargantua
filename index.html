@@ -202,37 +202,7 @@
         const noiseTex = createNoiseTexture();
 
         // --- Randomly Generated Interstellar Background ---
-        function createGalacticBackground() {
-            const width = 4096;
-            const height = 2048;
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d', { alpha: false });
-
-            // Use Math.random for unique generation each load
-            const rng = Math.random;
-
-            // Randomized galactic band parameters — different each load
-            const bandPhase = rng() * Math.PI * 2;        // Random phase offset
-            const bandFreq = 1.2 + rng() * 0.8;           // Frequency variation
-            const bandAmp = 120 + rng() * 120;             // Amplitude variation
-            const bandTilt = (rng() - 0.5) * 0.3;          // Slight vertical offset
-            const bandCenter = height / 2 + bandTilt * height;
-
-            // Random color theme bias — picks a dominant nebula mood
-            const themeBias = rng();  // 0-0.33: warm amber, 0.33-0.66: cool blue, 0.66-1: mixed
-
-            function galacticWave(x) {
-                const wave1 = Math.sin((x / width) * Math.PI * bandFreq + bandPhase) * bandAmp;
-                const wave2 = Math.sin((x / width) * Math.PI * (bandFreq * 2.5) + bandPhase * 1.7) * (bandAmp * 0.2);
-                return bandCenter + wave1 + wave2;
-            }
-
-            // Deep void base — pure black
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, width, height);
-
+        function drawNebulae({ ctx, width, height, rng, galacticWave, themeBias }) {
             // --- 1. Sparse Nebula Patches (few, faint, themed) ---
             ctx.globalCompositeOperation = 'screen';
             const nebulaCount = 15 + Math.floor(rng() * 20);
@@ -268,7 +238,9 @@
                 ctx.fillStyle = grad;
                 ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
             }
+        }
 
+        function drawGalacticBand({ ctx, width, height, rng, galacticWave }) {
             // --- 2. Subtle Galactic Band (varies per generation) ---
             ctx.globalCompositeOperation = 'screen';
             const bandDensity = 200 + Math.floor(rng() * 200);
@@ -300,7 +272,9 @@
                 ctx.fillStyle = grad;
                 ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
             }
+        }
 
+        function drawDustWisps({ ctx, width, rng, galacticWave }) {
             // --- 3. Filamentary Dust Wisps (sparse, elongated structures) ---
             ctx.globalCompositeOperation = 'screen';
             for (let i = 0; i < 60; i++) {
@@ -326,7 +300,9 @@
                 ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
+        }
 
+        function drawDarkDustLanes({ ctx, width, rng, galacticWave }) {
             // --- 4. Dark Dust Lanes / Absorption Nebulae ---
             ctx.globalCompositeOperation = 'multiply';
             for (let i = 0; i < 400; i++) {
@@ -352,7 +328,9 @@
                 ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
+        }
 
+        function drawDistantGalaxies({ ctx, width, height, rng }) {
             // --- 5. Distant Galaxy Patches (small concentrated glows) ---
             ctx.globalCompositeOperation = 'screen';
             const galaxyCount = 8 + Math.floor(rng() * 15);
@@ -374,63 +352,67 @@
                 ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
+        }
 
-            // --- 6. Dense Starfield ---
-            ctx.globalCompositeOperation = 'source-over';
+        function drawStarLayer({ ctx, width, height, rng, galacticWave, count, sizeMult, alphaMult, galacticBias }) {
+            for (let i = 0; i < count; i++) {
+                const x = rng() * width;
+                let y = rng() * height;
 
-            function addStars(count, sizeMult, alphaMult, galacticBias) {
-                for (let i = 0; i < count; i++) {
-                    const x = rng() * width;
-                    let y = rng() * height;
+                // Bias stars toward galactic plane
+                if (rng() < galacticBias) {
+                    const waveY = galacticWave(x);
+                    const u1 = Math.max(0.0001, rng());
+                    const v1 = rng();
+                    const gauss = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * v1);
+                    y = waveY + (gauss * 200);
+                }
 
-                    // Bias stars toward galactic plane
-                    if (rng() < galacticBias) {
-                        const waveY = galacticWave(x);
-                        const u1 = Math.max(0.0001, rng());
-                        const v1 = rng();
-                        const gauss = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * v1);
-                        y = waveY + (gauss * 200);
-                    }
+                if (y < 0) y += height;
+                if (y > height) y -= height;
 
-                    if (y < 0) y += height;
-                    if (y > height) y -= height;
+                const r = rng() * sizeMult + 0.2;
+                const alpha = (rng() * 0.6 + 0.4) * alphaMult;
 
-                    const r = rng() * sizeMult + 0.2;
-                    const alpha = (rng() * 0.6 + 0.4) * alphaMult;
+                // Star spectral types — weighted toward the cool white/blue-white of Interstellar
+                let rC = 255, gC = 255, bC = 255;
+                const t = rng();
+                if (t < 0.05) { rC = 140; gC = 170; bC = 255; }         // O/B — Hot Blue
+                else if (t < 0.2) { rC = 180; gC = 210; bC = 255; }     // B/A — Blue-White
+                else if (t < 0.55) { rC = 255; gC = 252; bC = 248; }    // F/G — Warm White
+                else if (t < 0.75) { rC = 255; gC = 235; bC = 200; }    // G/K — Pale Yellow
+                else if (t < 0.9) { rC = 255; gC = 200; bC = 150; }     // K — Orange
+                else { rC = 255; gC = 160; bC = 120; }                   // M — Red Dwarf
 
-                    // Star spectral types — weighted toward the cool white/blue-white of Interstellar
-                    let rC = 255, gC = 255, bC = 255;
-                    const t = rng();
-                    if (t < 0.05) { rC = 140; gC = 170; bC = 255; }         // O/B — Hot Blue
-                    else if (t < 0.2) { rC = 180; gC = 210; bC = 255; }     // B/A — Blue-White
-                    else if (t < 0.55) { rC = 255; gC = 252; bC = 248; }    // F/G — Warm White
-                    else if (t < 0.75) { rC = 255; gC = 235; bC = 200; }    // G/K — Pale Yellow
-                    else if (t < 0.9) { rC = 255; gC = 200; bC = 150; }     // K — Orange
-                    else { rC = 255; gC = 160; bC = 120; }                   // M — Red Dwarf
+                ctx.fillStyle = `rgba(${rC},${gC},${bC},${alpha})`;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
 
-                    ctx.fillStyle = `rgba(${rC},${gC},${bC},${alpha})`;
-                    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-
-                    // Soft halo for medium-bright stars
-                    if (r > 0.9 && alpha > 0.5) {
-                        const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5);
-                        grad.addColorStop(0, `rgba(${rC},${gC},${bC},${alpha * 0.25})`);
-                        grad.addColorStop(1, 'rgba(0,0,0,0)');
-                        ctx.fillStyle = grad;
-                        ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
-                    }
+                // Soft halo for medium-bright stars
+                if (r > 0.9 && alpha > 0.5) {
+                    const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5);
+                    grad.addColorStop(0, `rgba(${rC},${gC},${bC},${alpha * 0.25})`);
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
                 }
             }
+        }
+
+        function drawStarfield(env) {
+            // --- 6. Dense Starfield ---
+            env.ctx.globalCompositeOperation = 'source-over';
 
             // Layer 1: Dense tiny background stars (the "powder")
-            addStars(25000, 0.5, 0.35, 0.6);
+            drawStarLayer({ ...env, count: 25000, sizeMult: 0.5, alphaMult: 0.35, galacticBias: 0.6 });
             // Layer 2: Medium background stars
-            addStars(6000, 0.9, 0.55, 0.65);
+            drawStarLayer({ ...env, count: 6000, sizeMult: 0.9, alphaMult: 0.55, galacticBias: 0.65 });
             // Layer 3: Visible stars
-            addStars(2000, 1.4, 0.75, 0.5);
+            drawStarLayer({ ...env, count: 2000, sizeMult: 1.4, alphaMult: 0.75, galacticBias: 0.5 });
             // Layer 4: Bright prominent stars
-            addStars(300, 2.0, 0.95, 0.3);
+            drawStarLayer({ ...env, count: 300, sizeMult: 2.0, alphaMult: 0.95, galacticBias: 0.3 });
+        }
 
+        function drawDiffractionSpikes({ ctx, width, height, rng, galacticWave }) {
             // --- 7. Diffraction Spikes on Brightest Stars ---
             ctx.globalCompositeOperation = 'screen';
             const spikeCount = 40 + Math.floor(rng() * 40);
@@ -487,7 +469,9 @@
                     ctx.stroke();
                 }
             }
+        }
 
+        function drawStarClusters({ ctx, width, height, rng }) {
             // --- 8. Faint Star Clusters (globular cluster patches) ---
             ctx.globalCompositeOperation = 'screen';
             const clusterCount = 5 + Math.floor(rng() * 8);
@@ -517,6 +501,49 @@
                 ctx.fillStyle = gGrad;
                 ctx.beginPath(); ctx.arc(cx, cy, clusterSize, 0, Math.PI * 2); ctx.fill();
             }
+        }
+
+        function createGalacticBackground() {
+            const width = 4096;
+            const height = 2048;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { alpha: false });
+
+            // Use Math.random for unique generation each load
+            const rng = Math.random;
+
+            // Randomized galactic band parameters — different each load
+            const bandPhase = rng() * Math.PI * 2;        // Random phase offset
+            const bandFreq = 1.2 + rng() * 0.8;           // Frequency variation
+            const bandAmp = 120 + rng() * 120;             // Amplitude variation
+            const bandTilt = (rng() - 0.5) * 0.3;          // Slight vertical offset
+            const bandCenter = height / 2 + bandTilt * height;
+
+            // Random color theme bias — picks a dominant nebula mood
+            const themeBias = rng();  // 0-0.33: warm amber, 0.33-0.66: cool blue, 0.66-1: mixed
+
+            function galacticWave(x) {
+                const wave1 = Math.sin((x / width) * Math.PI * bandFreq + bandPhase) * bandAmp;
+                const wave2 = Math.sin((x / width) * Math.PI * (bandFreq * 2.5) + bandPhase * 1.7) * (bandAmp * 0.2);
+                return bandCenter + wave1 + wave2;
+            }
+
+            // Deep void base — pure black
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, width, height);
+
+            const env = { ctx, width, height, rng, galacticWave, themeBias };
+
+            drawNebulae(env);
+            drawGalacticBand(env);
+            drawDustWisps(env);
+            drawDarkDustLanes(env);
+            drawDistantGalaxies(env);
+            drawStarfield(env);
+            drawDiffractionSpikes(env);
+            drawStarClusters(env);
 
             const tex = new THREE.CanvasTexture(canvas);
             tex.wrapS = THREE.RepeatWrapping;
