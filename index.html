@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gargantua: Relativistic Raytracer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        #loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            letter-spacing: 4px;
+            z-index: 100;
+            transition: opacity 1s;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            pointer-events: none;
+            mix-blend-mode: screen;
+            z-index: 10;
+        }
+
+        h1 {
+            margin: 0;
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-size: 1.2rem;
+            text-shadow: 0 0 10px #fff;
+        }
+
+        p {
+            margin: 5px 0;
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+
+        .controls {
+            margin-top: 15px;
+            font-size: 0.75rem;
+            color: #aaa;
+            border-left: 2px solid #fff;
+            padding-left: 10px;
+        }
+
+        /* Easter Egg Overlay */
+        #frog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.8s ease-in;
+        }
+
+        #frog-overlay.active {
+            display: flex;
+            opacity: 1;
+        }
+
+        #frog-overlay img {
+            max-width: 90vw;
+            max-height: 90vh;
+            object-fit: contain;
+            animation: frogPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes frogPulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.03);
+            }
+        }
+
+        #frog-overlay .dismiss-text {
+            position: absolute;
+            bottom: 30px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.8rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading">GENERATING GALACTIC BACKGROUND...</div>
+    <div id="ui">
+        <h1>Gargantua Simulation</h1>
+        <p>Real-time Raymarching / Gravitational Lensing</p>
+        <div class="controls">
+            DRAG to Orbit<br>
+            SCROLL to Zoom<br>
+            WASD to Move<br>
+            SPACE / SHIFT for Up / Down<br>
+            Double Click to Reset
+        </div>
+    </div>
+
+    <!-- Easter Egg -->
+    <div id="frog-overlay" onclick="dismissFrog()">
+        <img src="frog.png" alt="You found the frog!">
+        <span class="dismiss-text">Click anywhere to escape the void</span>
+    </div>
+
+    <!-- Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false, depth: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        document.body.appendChild(renderer.domElement);
+
+        // --- Interaction State ---
+        let theta = 0;
+        let phi = Math.PI * 0.4;
+        let radius = 12.0;
+        const camPos = new THREE.Vector3();
+        const camTarget = new THREE.Vector3(0, 0, 0);
+
+        // --- Noise Texture for Disk ---
+        function createNoiseTexture() {
+            const size = 512;
+            const data = new Uint8Array(size * size * 4);
+            for (let i = 0; i < size * size * 4; i += 4) {
+                const n = Math.random();
+                const val = Math.floor(n * 255);
+                data[i] = val; data[i + 1] = val; data[i + 2] = val; data[i + 3] = 255;
+            }
+            const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+            texture.needsUpdate = true;
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+        const noiseTex = createNoiseTexture();
+
+        // --- Randomly Generated Interstellar Background ---
+        function createGalacticBackground() {
+            const width = 4096;
+            const height = 2048;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { alpha: false });
+
+            // Use Math.random for unique generation each load
+            const rng = Math.random;
+
+            // Randomized galactic band parameters — different each load
+            const bandPhase = rng() * Math.PI * 2;        // Random phase offset
+            const bandFreq = 1.2 + rng() * 0.8;           // Frequency variation
+            const bandAmp = 120 + rng() * 120;             // Amplitude variation
+            const bandTilt = (rng() - 0.5) * 0.3;          // Slight vertical offset
+            const bandCenter = height / 2 + bandTilt * height;
+
+            // Random color theme bias — picks a dominant nebula mood
+            const themeBias = rng();  // 0-0.33: warm amber, 0.33-0.66: cool blue, 0.66-1: mixed
+
+            function galacticWave(x) {
+                const wave1 = Math.sin((x / width) * Math.PI * bandFreq + bandPhase) * bandAmp;
+                const wave2 = Math.sin((x / width) * Math.PI * (bandFreq * 2.5) + bandPhase * 1.7) * (bandAmp * 0.2);
+                return bandCenter + wave1 + wave2;
+            }
+
+            // Deep void base — pure black
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, width, height);
+
+            // --- 1. Sparse Nebula Patches (few, faint, themed) ---
+            ctx.globalCompositeOperation = 'screen';
+            const nebulaCount = 15 + Math.floor(rng() * 20);
+            for (let i = 0; i < nebulaCount; i++) {
+                const x = rng() * width;
+                // Nebulae cluster somewhat near the galactic plane
+                const nearBand = rng() < 0.6;
+                const y = nearBand ? galacticWave(x) + (rng() - 0.5) * 400 : rng() * height;
+                const r = 100 + rng() * 500;
+                const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+                const warmth = rng();
+                let h, s, l;
+                if (themeBias < 0.33) {
+                    // Warm amber theme
+                    if (warmth < 0.6) { h = 20 + rng() * 25; s = 25 + rng() * 15; l = 4 + rng() * 4; }
+                    else if (warmth < 0.85) { h = 35 + rng() * 15; s = 20; l = 3 + rng() * 3; }
+                    else { h = 200 + rng() * 40; s = 15; l = 3; }
+                } else if (themeBias < 0.66) {
+                    // Cool blue theme
+                    if (warmth < 0.6) { h = 210 + rng() * 40; s = 20 + rng() * 15; l = 3 + rng() * 4; }
+                    else if (warmth < 0.85) { h = 250 + rng() * 20; s = 15; l = 3 + rng() * 3; }
+                    else { h = 25 + rng() * 20; s = 20; l = 3; }
+                } else {
+                    // Mixed theme
+                    if (warmth < 0.4) { h = 25 + rng() * 20; s = 25; l = 4 + rng() * 3; }
+                    else if (warmth < 0.7) { h = 220 + rng() * 30; s = 20; l = 3 + rng() * 3; }
+                    else { h = 35 + rng() * 10; s = 20; l = 4; }
+                }
+                const alpha = 0.003 + rng() * 0.007;
+                grad.addColorStop(0, `hsla(${h}, ${s}%, ${l}%, ${alpha})`);
+                grad.addColorStop(0.5, `hsla(${h}, ${s}%, ${l * 0.3}%, ${alpha * 0.2})`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+            }
+
+            // --- 2. Subtle Galactic Band (varies per generation) ---
+            ctx.globalCompositeOperation = 'screen';
+            const bandDensity = 200 + Math.floor(rng() * 200);
+            for (let i = 0; i < bandDensity; i++) {
+                const x = rng() * width;
+                const waveY = galacticWave(x);
+                const u1 = Math.max(0.0001, rng());
+                const v1 = rng();
+                const gauss = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * v1);
+                const spread = gauss * (90 + rng() * 60);
+                const y = waveY + spread;
+
+                if (y < -50 || y > height + 50) continue;
+
+                const r = 20 + rng() * 120;
+                const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+
+                const bandType = rng();
+                let h, s, l;
+                if (bandType < 0.4) { h = 30 + rng() * 15; s = 25 + rng() * 10; l = 6 + rng() * 4; }
+                else if (bandType < 0.65) { h = 15 + rng() * 15; s = 30; l = 5 + rng() * 3; }
+                else if (bandType < 0.85) { h = 220 + rng() * 20; s = 18; l = 5 + rng() * 3; }
+                else { h = 40 + rng() * 10; s = 18; l = 6 + rng() * 3; }
+                const alpha = 0.003 + rng() * 0.008;
+
+                grad.addColorStop(0, `hsla(${h}, ${s}%, ${l}%, ${alpha})`);
+                grad.addColorStop(0.5, `hsla(${h}, ${s}%, ${l * 0.3}%, ${alpha * 0.3})`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+            }
+
+            // --- 3. Filamentary Dust Wisps (sparse, elongated structures) ---
+            ctx.globalCompositeOperation = 'screen';
+            for (let i = 0; i < 60; i++) {
+                const x = rng() * width;
+                const waveY = galacticWave(x);
+                const u1 = Math.max(0.0001, rng());
+                const v1 = rng();
+                const gauss = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * v1);
+                const y = waveY + gauss * 100;
+
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(rng() * Math.PI * 0.4 - 0.2);
+                ctx.scale(2.0 + rng() * 4.0, 0.3 + rng() * 0.5);
+
+                const r = 20 + rng() * 60;
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+                const h = 25 + rng() * 25;
+                const alpha = 0.004 + rng() * 0.006;
+                grad.addColorStop(0, `hsla(${h}, 30%, 12%, ${alpha})`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            // --- 4. Dark Dust Lanes / Absorption Nebulae ---
+            ctx.globalCompositeOperation = 'multiply';
+            for (let i = 0; i < 400; i++) {
+                const x = rng() * width;
+                const waveY = galacticWave(x);
+                const u1 = Math.max(0.0001, rng());
+                const v1 = rng();
+                const gauss = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * v1);
+                const y = waveY + gauss * 80;
+                const r = 15 + rng() * 100;
+
+                // Elongated dark streaks
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(rng() * 0.6 - 0.3);
+                ctx.scale(1.0 + rng() * 3.0, 0.5 + rng() * 0.5);
+
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+                const darkness = 0.4 + rng() * 0.4;
+                grad.addColorStop(0, `rgba(0,0,0,${darkness})`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            // --- 5. Distant Galaxy Patches (small concentrated glows) ---
+            ctx.globalCompositeOperation = 'screen';
+            const galaxyCount = 8 + Math.floor(rng() * 15);
+            for (let i = 0; i < galaxyCount; i++) {
+                const x = rng() * width;
+                const y = rng() * height;
+                const r = 4 + rng() * 12;
+
+                // Tiny bright galaxy cores
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(rng() * Math.PI);
+                ctx.scale(1.0 + rng() * 2.0, 0.4 + rng() * 0.6);
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+                grad.addColorStop(0, `rgba(255,240,210,0.25)`);
+                grad.addColorStop(0.3, `rgba(255,200,150,0.08)`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            // --- 6. Dense Starfield ---
+            ctx.globalCompositeOperation = 'source-over';
+
+            function addStars(count, sizeMult, alphaMult, galacticBias) {
+                for (let i = 0; i < count; i++) {
+                    const x = rng() * width;
+                    let y = rng() * height;
+
+                    // Bias stars toward galactic plane
+                    if (rng() < galacticBias) {
+                        const waveY = galacticWave(x);
+                        const u1 = Math.max(0.0001, rng());
+                        const v1 = rng();
+                        const gauss = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * v1);
+                        y = waveY + (gauss * 200);
+                    }
+
+                    if (y < 0) y += height;
+                    if (y > height) y -= height;
+
+                    const r = rng() * sizeMult + 0.2;
+                    const alpha = (rng() * 0.6 + 0.4) * alphaMult;
+
+                    // Star spectral types — weighted toward the cool white/blue-white of Interstellar
+                    let rC = 255, gC = 255, bC = 255;
+                    const t = rng();
+                    if (t < 0.05) { rC = 140; gC = 170; bC = 255; }         // O/B — Hot Blue
+                    else if (t < 0.2) { rC = 180; gC = 210; bC = 255; }     // B/A — Blue-White
+                    else if (t < 0.55) { rC = 255; gC = 252; bC = 248; }    // F/G — Warm White
+                    else if (t < 0.75) { rC = 255; gC = 235; bC = 200; }    // G/K — Pale Yellow
+                    else if (t < 0.9) { rC = 255; gC = 200; bC = 150; }     // K — Orange
+                    else { rC = 255; gC = 160; bC = 120; }                   // M — Red Dwarf
+
+                    ctx.fillStyle = `rgba(${rC},${gC},${bC},${alpha})`;
+                    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+
+                    // Soft halo for medium-bright stars
+                    if (r > 0.9 && alpha > 0.5) {
+                        const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5);
+                        grad.addColorStop(0, `rgba(${rC},${gC},${bC},${alpha * 0.25})`);
+                        grad.addColorStop(1, 'rgba(0,0,0,0)');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
+            }
+
+            // Layer 1: Dense tiny background stars (the "powder")
+            addStars(25000, 0.5, 0.35, 0.6);
+            // Layer 2: Medium background stars
+            addStars(6000, 0.9, 0.55, 0.65);
+            // Layer 3: Visible stars
+            addStars(2000, 1.4, 0.75, 0.5);
+            // Layer 4: Bright prominent stars
+            addStars(300, 2.0, 0.95, 0.3);
+
+            // --- 7. Diffraction Spikes on Brightest Stars ---
+            ctx.globalCompositeOperation = 'screen';
+            const spikeCount = 40 + Math.floor(rng() * 40);
+            for (let i = 0; i < spikeCount; i++) {
+                const x = rng() * width;
+                let y = rng() * height;
+                // Some cluster near galactic plane
+                if (rng() < 0.4) {
+                    const waveY = galacticWave(x);
+                    y = waveY + (rng() - 0.5) * 300;
+                }
+                if (y < 0) y += height;
+                if (y > height) y -= height;
+
+                const brightness = 0.4 + rng() * 0.6;
+                const spikeLen = 8 + rng() * 25;
+
+                // Star spectral color for this bright star
+                const t = rng();
+                let rC, gC, bC;
+                if (t < 0.3) { rC = 200; gC = 220; bC = 255; }       // Blue-white
+                else if (t < 0.7) { rC = 255; gC = 250; bC = 240; }  // Warm white
+                else { rC = 255; gC = 220; bC = 180; }                 // Yellow
+
+                // Core glow
+                const coreR = 2.0 + rng() * 2.0;
+                const cGrad = ctx.createRadialGradient(x, y, 0, x, y, coreR * 5);
+                cGrad.addColorStop(0, `rgba(${rC},${gC},${bC},${brightness})`);
+                cGrad.addColorStop(0.2, `rgba(${rC},${gC},${bC},${brightness * 0.4})`);
+                cGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = cGrad;
+                ctx.beginPath(); ctx.arc(x, y, coreR * 5, 0, Math.PI * 2); ctx.fill();
+
+                // 4-point diffraction spikes (cross pattern)
+                ctx.strokeStyle = `rgba(${rC},${gC},${bC},${brightness * 0.35})`;
+                ctx.lineWidth = 0.8;
+                ctx.beginPath();
+                // Horizontal spike
+                ctx.moveTo(x - spikeLen, y); ctx.lineTo(x + spikeLen, y);
+                // Vertical spike
+                ctx.moveTo(x, y - spikeLen); ctx.lineTo(x, y + spikeLen);
+                ctx.stroke();
+
+                // Thinner secondary diagonal spikes (rotated 45°)
+                if (rng() > 0.5) {
+                    const dLen = spikeLen * 0.5;
+                    ctx.strokeStyle = `rgba(${rC},${gC},${bC},${brightness * 0.15})`;
+                    ctx.lineWidth = 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(x - dLen * 0.707, y - dLen * 0.707);
+                    ctx.lineTo(x + dLen * 0.707, y + dLen * 0.707);
+                    ctx.moveTo(x + dLen * 0.707, y - dLen * 0.707);
+                    ctx.lineTo(x - dLen * 0.707, y + dLen * 0.707);
+                    ctx.stroke();
+                }
+            }
+
+            // --- 8. Faint Star Clusters (globular cluster patches) ---
+            ctx.globalCompositeOperation = 'screen';
+            const clusterCount = 5 + Math.floor(rng() * 8);
+            for (let c = 0; c < clusterCount; c++) {
+                const cx = rng() * width;
+                const cy = rng() * height;
+                const clusterSize = 30 + rng() * 60;
+                const starCount = 80 + Math.floor(rng() * 150);
+
+                for (let i = 0; i < starCount; i++) {
+                    const u1 = Math.max(0.0001, rng());
+                    const v1 = rng();
+                    const gauss = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * v1);
+                    const sx = cx + gauss * clusterSize * 0.5;
+                    const sy = cy + (Math.sqrt(-2 * Math.log(Math.max(0.0001, rng()))) * Math.cos(2 * Math.PI * rng())) * clusterSize * 0.5;
+
+                    const r = 0.3 + rng() * 0.6;
+                    const alpha = 0.2 + rng() * 0.4;
+                    ctx.fillStyle = `rgba(255,248,235,${alpha})`;
+                    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+                }
+
+                // Overall cluster glow
+                const gGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, clusterSize);
+                gGrad.addColorStop(0, `rgba(255,240,210,0.04)`);
+                gGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = gGrad;
+                ctx.beginPath(); ctx.arc(cx, cy, clusterSize, 0, Math.PI * 2); ctx.fill();
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            return tex;
+        }
+        const starTex = createGalacticBackground();
+
+        // --- The Shader Material ---
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                iTime: { value: 0 },
+                camPos: { value: new THREE.Vector3() },
+                camDir: { value: new THREE.Vector3() },
+                camUp: { value: new THREE.Vector3() },
+                camRight: { value: new THREE.Vector3() },
+                noiseTex: { value: noiseTex },
+                starTex: { value: starTex }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec2 iResolution;
+                uniform float iTime;
+                uniform vec3 camPos;
+                uniform vec3 camDir;
+                uniform vec3 camUp;
+                uniform vec3 camRight;
+                uniform sampler2D noiseTex;
+                uniform sampler2D starTex;
+                varying vec2 vUv;
+
+                #define MAX_STEPS 200
+                #define HIT_THRESHOLD 0.05
+                #define BH_RADIUS 1.0
+                #define DISK_INNER 2.5
+                #define DISK_OUTER 8.0
+                #define GRAVITY_STRENGTH 0.8
+                #define ESCAPE_DIST 100.0
+
+                // Disk Texture Logic
+                vec3 getDiskColor(vec3 pos, float dist) {
+                    float r = length(pos);
+                    if(r < DISK_INNER || r > DISK_OUTER) return vec3(0.0);
+                    
+                    float angle = atan(pos.z, pos.x);
+                    float speed = 3.0 * pow(r, -1.5); 
+                    float rotAngle = angle + iTime * speed;
+                    
+                    vec2 uv = vec2(r * 0.1, rotAngle * 0.5);
+                    float noise = texture2D(noiseTex, uv).r;
+                    float noise2 = texture2D(noiseTex, uv * 2.5 + vec2(iTime*0.1)).g;
+                    
+                    float intensity = noise * noise2 * 2.5;
+                    float alpha = smoothstep(DISK_INNER, DISK_INNER + 0.5, r) * (1.0 - smoothstep(DISK_OUTER - 1.0, DISK_OUTER, r));
+                    
+                    vec3 hot = vec3(1.0, 0.95, 0.8);
+                    vec3 cold = vec3(0.9, 0.2, 0.01);
+                    vec3 col = mix(cold, hot, intensity * 0.8);
+                    
+                    vec3 vel = normalize(vec3(-pos.z, 0.0, pos.x));
+                    vec3 viewDir = normalize(pos - camPos);
+                    float doppler = dot(vel, viewDir);
+                    
+                    float beam = pow((1.0 + doppler * 0.5), 3.0);
+                    
+                    return col * intensity * alpha * beam;
+                }
+
+                void main() {
+                    vec2 uv = (gl_FragCoord.xy - 0.5 * iResolution.xy) / iResolution.y;
+                    
+                    vec3 ro = camPos;
+                    vec3 rd = normalize(camDir + uv.x * camRight + uv.y * camUp);
+                    
+                    vec3 p = ro;
+                    vec3 v = rd; 
+                    vec3 col = vec3(0.0);
+                    
+                    float dt = 0.1; 
+                    float totalDist = 0.0;
+                    
+                    vec3 accColor = vec3(0.0);
+                    float accAlpha = 0.0;
+                    
+                    for(int i = 0; i < MAX_STEPS; i++) {
+                        float r = length(p);
+                        
+                        // 1. Event Horizon Hit
+                        if(r < BH_RADIUS) {
+                            col = vec3(0.0);
+                            break;
+                        }
+                        
+                        // 2. Escape Condition (Sample Galaxy)
+                        if(r > ESCAPE_DIST) {
+                            // Tilt the galaxy for a better composition angle
+                            vec3 bgV = v;
+                            
+                            // Rotate around X
+                            float rotX = 0.6; 
+                            mat2 rX = mat2(cos(rotX), -sin(rotX), sin(rotX), cos(rotX));
+                            bgV.yz = rX * bgV.yz;
+                            
+                            // Rotate around Y
+                            float rotY = 1.1; 
+                            mat2 rY = mat2(cos(rotY), -sin(rotY), sin(rotY), cos(rotY));
+                            bgV.xz = rY * bgV.xz;
+
+                            float phi = atan(bgV.z, bgV.x);
+                            float theta = acos(bgV.y);
+                            vec2 starUV = vec2(phi / 6.2831 + 0.5, theta / 3.14159);
+                            vec3 stars = texture2D(starTex, starUV).rgb;
+                            col = stars; 
+                            break;
+                        }
+                        
+                        // 3. Accretion Disk Intersection (Plane Y=0)
+                        vec3 nextP = p + v * dt;
+                        if(p.y * nextP.y < 0.0) {
+                            float t = -p.y / (v.y);
+                            vec3 hitPos = p + v * t;
+                            vec3 diskC = getDiskColor(hitPos, length(hitPos));
+                            accColor += diskC * 0.8; 
+                        }
+                        
+                        // 4. Gravity Bending (Newtonian approximation for lensing visual)
+                        vec3 acc = -normalize(p) * (GRAVITY_STRENGTH / (r * r));
+                        
+                        v += acc * dt;
+                        v = normalize(v); // Maintain speed of light
+                        p += v * dt;
+                        
+                        dt = max(0.05, r * 0.08); 
+                    }
+                    
+                    col += accColor;
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            `
+        });
+
+        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+        scene.add(quad);
+
+        // --- Post Processing (Bloom) ---
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.08;
+        bloomPass.strength = 1.2;
+        bloomPass.radius = 1.1;
+        composer.addPass(bloomPass);
+
+        // --- Input Handling ---
+        let isDragging = false;
+        let prevMouse = { x: 0, y: 0 };
+        const keysPressed = new Set();
+        const MOVE_SPEED = 0.15;
+        let frogTriggered = false;
+
+        // Easter Egg dismiss function (global scope for onclick)
+        window.dismissFrog = function () {
+            const overlay = document.getElementById('frog-overlay');
+            overlay.classList.remove('active');
+            setTimeout(() => overlay.style.display = 'none', 800);
+            // Reset camera to safe distance
+            camTarget.set(0, 0, 0);
+            radius = 12.0;
+            theta = 0;
+            phi = Math.PI * 0.4;
+            frogTriggered = false;
+        };
+
+        window.addEventListener('keydown', (e) => keysPressed.add(e.code));
+        window.addEventListener('keyup', (e) => keysPressed.delete(e.code));
+
+        window.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            prevMouse.x = e.clientX;
+            prevMouse.y = e.clientY;
+        });
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = (e.clientX - prevMouse.x) * 0.005;
+                const dy = (e.clientY - prevMouse.y) * 0.005;
+                theta -= dx;
+                phi -= dy;
+                phi = Math.max(0.1, Math.min(Math.PI - 0.1, phi));
+                prevMouse.x = e.clientX;
+                prevMouse.y = e.clientY;
+            }
+        });
+        window.addEventListener('wheel', (e) => {
+            radius += e.deltaY * 0.01;
+            radius = Math.max(3.0, Math.min(60.0, radius));
+        });
+        window.addEventListener('dblclick', () => {
+            radius = 12.0; theta = 0; phi = Math.PI * 0.4;
+            camTarget.set(0, 0, 0);
+        });
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+        const loadingEl = document.getElementById('loading');
+        // Small timeout to ensure texture renders to canvas
+        setTimeout(() => loadingEl.style.opacity = 0, 800);
+        setTimeout(() => loadingEl.style.display = 'none', 1800);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            // Compute camera orbit position relative to target
+            camPos.set(
+                camTarget.x + radius * Math.sin(phi) * Math.sin(theta),
+                camTarget.y + radius * Math.cos(phi),
+                camTarget.z + radius * Math.sin(phi) * Math.cos(theta)
+            );
+
+            const forward = new THREE.Vector3().subVectors(camTarget, camPos).normalize();
+            const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+            const up = new THREE.Vector3().crossVectors(forward, right).normalize();
+
+            // --- WASD + Space/Shift Movement ---
+            if (keysPressed.has('KeyW')) camTarget.addScaledVector(forward, MOVE_SPEED);
+            if (keysPressed.has('KeyS')) camTarget.addScaledVector(forward, -MOVE_SPEED);
+            if (keysPressed.has('KeyA')) camTarget.addScaledVector(right, -MOVE_SPEED);
+            if (keysPressed.has('KeyD')) camTarget.addScaledVector(right, MOVE_SPEED);
+            if (keysPressed.has('Space')) camTarget.y += MOVE_SPEED;
+            if (keysPressed.has('ShiftLeft') || keysPressed.has('ShiftRight')) camTarget.y -= MOVE_SPEED;
+
+            // --- Easter Egg: Frog when entering the event horizon ---
+            const distToBlackHole = camPos.length();
+            if (distToBlackHole < 2.5 && !frogTriggered) {
+                frogTriggered = true;
+                const overlay = document.getElementById('frog-overlay');
+                overlay.style.display = 'flex';
+                requestAnimationFrame(() => overlay.classList.add('active'));
+            }
+
+            material.uniforms.iTime.value = time;
+            material.uniforms.camPos.value.copy(camPos);
+            material.uniforms.camDir.value.copy(forward);
+            material.uniforms.camUp.value.copy(up);
+            material.uniforms.camRight.value.copy(right);
+
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setSize(w, h);
+            composer.setSize(w, h);
+            material.uniforms.iResolution.value.set(w, h);
+        });
+
+        animate();
+    </script>
+</body>
+
+</html>
