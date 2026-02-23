@@ -721,9 +721,10 @@
                         }
                         
                         // Photon ring glow: bright thin ring near the photon sphere
+                        // Scale by dt for step-independence, and restrict vertically (p.y) so it forms a ring instead of a full solid sphere
                         float photonDist = abs(r - PHOTON_SPHERE);
                         if(photonDist < 0.3) {
-                            float ringGlow = exp(-photonDist * 15.0) * 0.15;
+                            float ringGlow = exp(-photonDist * 15.0) * 2.0 * dt * exp(-abs(p.y) * 10.0);
                             accColor += vec3(1.0, 0.85, 0.6) * ringGlow;
                         }
                         
