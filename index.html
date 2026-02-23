@@ -178,7 +178,7 @@
         // --- Interaction State ---
         let theta = 0;
         let phi = Math.PI * 0.4;
-        let radius = 12.0;
+        let radius = 18.0;
         const camPos = new THREE.Vector3();
         const camTarget = new THREE.Vector3(0, 0, 0);
 
@@ -620,9 +620,10 @@
                 #define MAX_STEPS 300
                 #define HIT_THRESHOLD 0.05
                 #define BH_RADIUS 1.0
+                #define PHOTON_SPHERE 1.5
                 #define DISK_INNER 2.5
                 #define DISK_OUTER 8.0
-                #define GRAVITY_STRENGTH 0.8
+                #define GRAVITY_STRENGTH 1.2
                 #define ESCAPE_DIST 100.0
 
                 // Disk Texture Logic
@@ -641,7 +642,7 @@
                     // Scale uv.y by an integer (2.0) so the 3.0 wrapping jump becomes 6.0 (still an integer)
                     float noise2 = texture2D(noiseTex, vec2(uv.x * 2.5, uv.y * 2.0) + vec2(iTime*0.1)).g;
                     
-                    float intensity = noise * noise2 * 2.5;
+                    float intensity = noise * noise2 * 1.8;
                     float alpha = smoothstep(DISK_INNER, DISK_INNER + 0.5, r) * (1.0 - smoothstep(DISK_OUTER - 1.0, DISK_OUTER, r));
                     
                     vec3 hot = vec3(1.0, 0.95, 0.8);
@@ -676,9 +677,10 @@
                     for(int i = 0; i < MAX_STEPS; i++) {
                         float r = length(p);
                         
-                        // 1. Event Horizon Hit
+                        // 1. Event Horizon Hit — ray is swallowed, everything goes black
                         if(r < BH_RADIUS) {
                             col = vec3(0.0);
+                            accColor = vec3(0.0);
                             break;
                         }
                         
@@ -705,28 +707,40 @@
                             break;
                         }
                         
-                        // Gravity Bending (Newtonian approximation for lensing visual)
+                        // Schwarzschild-like geodesic for photons
+                        // GR correction term scales as 1/r^4 (compared to Newtonian 1/r^3)
                         float r2 = r * r;
-                        vec3 acc = -p * (GRAVITY_STRENGTH / (r2 * r)); // -normalize(p) * G/r^2 = -p * G/r^3
+                        vec3 acc = -p * (GRAVITY_STRENGTH / (r2 * r2)); // ~1/r^4 gives proper photon sphere
                         
-                        // 3. Accretion Disk Intersection (Plane Y=0) - only check when close to disk plane
+                        // 3. Accretion Disk Intersection (Plane Y=0)
                         float nextY = p.y + v.y * dt;
                         if(p.y * nextY < 0.0) {
-                            float t_hit = -p.y / v.y; // linear approximation (fast, sufficient with small dt)
+                            float t_hit = -p.y / v.y;
                             vec3 hitPos = p + v * t_hit;
                             vec3 diskC = getDiskColor(hitPos, length(hitPos));
                             accColor += diskC * 0.8; 
                         }
                         
-                        // Leapfrog integration (single normalize)
+                        // Photon ring glow: bright thin ring near the photon sphere
+                        float photonDist = abs(r - PHOTON_SPHERE);
+                        if(photonDist < 0.3) {
+                            float ringGlow = exp(-photonDist * 20.0) * 0.08;
+                            accColor += vec3(1.0, 0.85, 0.6) * ringGlow;
+                        }
+                        
+                        // Leapfrog integration
                         v += acc * dt;
-                        v = normalize(v); // Maintain speed of light
+                        v = normalize(v);
                         p += v * dt;
                         
-                        // Adaptive step size: small near black hole, large far away
-                        // Near disk region (2-9): use finer steps for quality
-                        // Far from BH (>15): use large steps for speed
-                        dt = (r < 10.0) ? max(0.02, r * 0.025) : r * 0.06; 
+                        // Adaptive step: very fine near photon sphere, coarser far away
+                        if(r < 3.0) {
+                            dt = max(0.005, (r - BH_RADIUS) * 0.03);
+                        } else if(r < 10.0) {
+                            dt = r * 0.025;
+                        } else {
+                            dt = r * 0.06;
+                        } 
                     }
                     
                     col += accColor;
@@ -744,9 +758,9 @@
         composer.addPass(renderPass);
 
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        bloomPass.threshold = 0.08;
-        bloomPass.strength = 1.2;
-        bloomPass.radius = 1.1;
+        bloomPass.threshold = 0.3;
+        bloomPass.strength = 0.8;
+        bloomPass.radius = 0.8;
         composer.addPass(bloomPass);
 
         // --- Input Handling ---
@@ -763,7 +777,7 @@
             setTimeout(() => overlay.style.display = 'none', 800);
             // Reset camera to safe distance
             camTarget.set(0, 0, 0);
-            radius = 12.0;
+            radius = 18.0;
             theta = 0;
             phi = Math.PI * 0.4;
             frogTriggered = false;
@@ -814,7 +828,7 @@
             radius = Math.max(3.0, Math.min(60.0, radius));
         });
         window.addEventListener('dblclick', () => {
-            radius = 12.0; theta = 0; phi = Math.PI * 0.4;
+            radius = 18.0; theta = 0; phi = Math.PI * 0.4;
             camTarget.set(0, 0, 0);
         });
 
