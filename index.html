@@ -617,7 +617,7 @@
                 uniform sampler2D starTex;
                 varying vec2 vUv;
 
-                #define MAX_STEPS 600
+                #define MAX_STEPS 300
                 #define HIT_THRESHOLD 0.05
                 #define BH_RADIUS 1.0
                 #define DISK_INNER 2.5
@@ -706,34 +706,27 @@
                         }
                         
                         // Gravity Bending (Newtonian approximation for lensing visual)
-                        vec3 acc = -normalize(p) * (GRAVITY_STRENGTH / (r * r));
+                        float r2 = r * r;
+                        vec3 acc = -p * (GRAVITY_STRENGTH / (r2 * r)); // -normalize(p) * G/r^2 = -p * G/r^3
                         
-                        // 3. Accretion Disk Intersection (Plane Y=0) using Quadratic Path
-                        vec3 nextP = p + v * dt + 0.5 * acc * dt * dt;
-                        if(p.y * nextP.y < 0.0) {
-                            float a = 0.5 * acc.y;
-                            float b = v.y;
-                            float c = p.y;
-                            float disc = b * b - 4.0 * a * c;
-                            float t_hit = -p.y / v.y; // linear fallback
-                            if (abs(a) > 1e-5 && disc >= 0.0) {
-                                float sq = sqrt(disc);
-                                float t1 = (-b - sq) / (2.0 * a);
-                                float t2 = (-b + sq) / (2.0 * a);
-                                if (t1 >= 0.0 && t1 <= dt) t_hit = t1;
-                                else if (t2 >= 0.0 && t2 <= dt) t_hit = t2;
-                            }
-                            vec3 hitPos = p + v * t_hit + 0.5 * acc * t_hit * t_hit;
+                        // 3. Accretion Disk Intersection (Plane Y=0) - only check when close to disk plane
+                        float nextY = p.y + v.y * dt;
+                        if(p.y * nextY < 0.0) {
+                            float t_hit = -p.y / v.y; // linear approximation (fast, sufficient with small dt)
+                            vec3 hitPos = p + v * t_hit;
                             vec3 diskC = getDiskColor(hitPos, length(hitPos));
                             accColor += diskC * 0.8; 
                         }
                         
-                        // Half step velocity for slightly better integration accuracy
-                        vec3 half_v = normalize(v + acc * dt * 0.5);
-                        p += half_v * dt;
-                        v = normalize(v + acc * dt); // Maintain speed of light
+                        // Leapfrog integration (single normalize)
+                        v += acc * dt;
+                        v = normalize(v); // Maintain speed of light
+                        p += v * dt;
                         
-                        dt = max(0.01, r * 0.015); 
+                        // Adaptive step size: small near black hole, large far away
+                        // Near disk region (2-9): use finer steps for quality
+                        // Far from BH (>15): use large steps for speed
+                        dt = (r < 10.0) ? max(0.02, r * 0.025) : r * 0.06; 
                     }
                     
                     col += accColor;
