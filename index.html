@@ -112,6 +112,19 @@
             letter-spacing: 3px;
             text-transform: uppercase;
         }
+
+        /* Rickroll Video Overlay */
+        #rickroll-video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 10000;
+            display: none;
+            background: #000;
+        }
     </style>
 </head>
 
@@ -134,6 +147,9 @@
         <img src="frog.png" alt="You found the frog!">
         <span class="dismiss-text">Click anywhere to escape the void</span>
     </div>
+
+    <!-- Rickroll Video -->
+    <video id="rickroll-video" src="Rick_Roll_Different_link_no_ads_360p.mp4" playsinline></video>
 
     <!-- Import Map -->
     <script type="importmap">
@@ -694,7 +710,12 @@
             if (e.code === konamiCode[konamiIndex]) {
                 konamiIndex++;
                 if (konamiIndex === konamiCode.length) {
-                    window.open('https://youtu.be/xvFZjo5PgG0', '_blank');
+                    const video = document.getElementById('rickroll-video');
+                    video.style.display = 'block';
+                    video.play().catch(err => console.error("Video play failed:", err));
+                    if (video.requestFullscreen) {
+                        video.requestFullscreen().catch(err => console.error("Fullscreen failed:", err));
+                    }
                     konamiIndex = 0;
                 }
             } else {
