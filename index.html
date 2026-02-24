@@ -630,32 +630,48 @@
                 vec3 getDiskColor(vec3 pos, float dist) {
                     float r = length(pos);
                     if(r < DISK_INNER || r > DISK_OUTER) return vec3(0.0);
-                    
+
                     float angle = atan(pos.z, pos.x);
-                    float speed = 3.0 * pow(r, -1.5); 
+                    float speed = 3.0 * pow(r, -1.5);
                     float rotAngle = angle + iTime * speed;
-                    
-                    // Ensure the UV mapping wraps exactly at integer boundaries (6.28318 corresponds to 2*PI)
-                    // We multiply by 3.0 to cause the texture to tile exactly 3 times around the circumference
+
                     vec2 uv = vec2(r * 0.1, (rotAngle / 6.2831853) * 3.0);
                     float noise = texture2D(noiseTex, uv).r;
-                    // Scale uv.y by an integer (2.0) so the 3.0 wrapping jump becomes 6.0 (still an integer)
                     float noise2 = texture2D(noiseTex, vec2(uv.x * 2.5, uv.y * 2.0) + vec2(iTime*0.1)).g;
-                    
-                    float intensity = noise * noise2 * 2.5;
-                    float alpha = smoothstep(DISK_INNER, DISK_INNER + 0.5, r) * (1.0 - smoothstep(DISK_OUTER - 1.0, DISK_OUTER, r));
-                    
-                    vec3 hot = vec3(1.0, 0.95, 0.8);
-                    vec3 cold = vec3(0.9, 0.2, 0.01);
-                    vec3 col = mix(cold, hot, intensity * 0.8);
-                    
+                    float noise3 = texture2D(noiseTex, vec2(uv.x * 0.5, uv.y * 1.0) + vec2(iTime*0.05, 0.3)).b;
+
+                    float intensity = noise * noise2 * 2.8 + noise3 * 0.3;
+                    float alpha = smoothstep(DISK_INNER, DISK_INNER + 0.3, r) * (1.0 - smoothstep(DISK_OUTER - 1.5, DISK_OUTER, r));
+
+                    // Temperature: hotter near inner edge
+                    float temp = 1.0 - smoothstep(DISK_INNER, DISK_OUTER * 0.7, r);
+
+                    // Doppler beaming
                     vec3 vel = normalize(vec3(-pos.z, 0.0, pos.x));
                     vec3 viewDir = normalize(pos - camPos);
                     float doppler = dot(vel, viewDir);
-                    
+                    float dopplerFactor = clamp(doppler * 0.5 + 0.5, 0.0, 1.0);
+
+                    // Color palette based on Doppler shift and temperature
+                    vec3 blueShifted = vec3(0.5, 0.6, 1.0);    // approaching: blue/cyan
+                    vec3 redShifted = vec3(1.0, 0.35, 0.05);    // receding: deep orange/red
+                    vec3 purple = vec3(0.6, 0.15, 0.85);         // intermediate: violet
+                    vec3 hotWhite = vec3(1.0, 0.95, 0.9);       // innermost: white-hot
+
+                    // Blend Doppler colors
+                    vec3 dopplerColor = mix(redShifted, blueShifted, dopplerFactor);
+                    // Add purple at intermediate Doppler values
+                    float purpleMix = (1.0 - abs(doppler)) * 0.4;
+                    dopplerColor = mix(dopplerColor, purple, purpleMix);
+                    // Blend toward white-hot at inner edge
+                    vec3 col = mix(dopplerColor, hotWhite, temp * 0.65);
+
                     float beam = pow((1.0 + doppler * 0.5), 3.0);
-                    
-                    return col * intensity * alpha * beam;
+
+                    // Inner edge extra brightness
+                    float innerBoost = 1.0 + smoothstep(DISK_INNER + 1.0, DISK_INNER, r) * 2.0;
+
+                    return col * intensity * alpha * beam * innerBoost;
                 }
 
                 void main() {
@@ -717,15 +733,29 @@
                             float t_hit = -p.y / v.y;
                             vec3 hitPos = p + v * t_hit;
                             vec3 diskC = getDiskColor(hitPos, length(hitPos));
-                            accColor += diskC * 0.8; 
+                            accColor += diskC * 1.2;
                         }
                         
-                        // Photon ring glow: bright thin ring near the photon sphere
-                        // Scale by dt for step-independence, and restrict vertically (p.y) so it forms a ring instead of a full solid sphere
+                        // Photon ring glow: bright ring near the photon sphere
                         float photonDist = abs(r - PHOTON_SPHERE);
-                        if(photonDist < 0.3) {
-                            float ringGlow = exp(-photonDist * 15.0) * 2.0 * dt * exp(-abs(p.y) * 10.0);
-                            accColor += vec3(1.0, 0.85, 0.6) * ringGlow;
+                        if(photonDist < 0.5) {
+                            float ringGlow = exp(-photonDist * 12.0) * 3.5 * dt * exp(-abs(p.y) * 8.0);
+                            // Multi-color photon ring: blend blue/violet/warm white
+                            float ringAngle = atan(p.z, p.x);
+                            float ringPhase = sin(ringAngle * 2.0 + iTime * 0.3) * 0.5 + 0.5;
+                            vec3 ringBlue = vec3(0.5, 0.55, 1.0);
+                            vec3 ringViolet = vec3(0.7, 0.3, 1.0);
+                            vec3 ringWarm = vec3(1.0, 0.85, 0.6);
+                            vec3 ringCol = mix(ringBlue, ringWarm, ringPhase);
+                            ringCol = mix(ringCol, ringViolet, sin(ringAngle * 3.0 - iTime * 0.5) * 0.3 + 0.15);
+                            accColor += ringCol * ringGlow;
+                        }
+
+                        // Inner edge glow near event horizon
+                        if(r < BH_RADIUS + 0.4 && r > BH_RADIUS) {
+                            float edgeDist = r - BH_RADIUS;
+                            float edgeGlow = exp(-edgeDist * 10.0) * 0.8 * dt * exp(-abs(p.y) * 6.0);
+                            accColor += vec3(0.3, 0.15, 0.6) * edgeGlow;
                         }
                         
                         // Leapfrog integration
@@ -758,9 +788,9 @@
         composer.addPass(renderPass);
 
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        bloomPass.threshold = 0.08;
-        bloomPass.strength = 1.2;
-        bloomPass.radius = 1.1;
+        bloomPass.threshold = 0.06;
+        bloomPass.strength = 1.6;
+        bloomPass.radius = 1.3;
         composer.addPass(bloomPass);
 
         // --- Input Handling ---
