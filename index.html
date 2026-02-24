@@ -665,7 +665,7 @@
                     vec3 vel = normalize(vec3(-pos.z, 0.0, pos.x));
                     vec3 viewDir = normalize(pos - camPos);
                     float doppler = dot(vel, viewDir);
-                    float beam = pow(1.0 + doppler * 0.5, 3.0);
+                    float beam = pow(1.0 + doppler * 0.35, 3.0);
                     
                     // Inner edge extra brightness
                     float innerBoost = 1.0 + smoothstep(DISK_INNER + 1.5, DISK_INNER, r) * 3.0;
